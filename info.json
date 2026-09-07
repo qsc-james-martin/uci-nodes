@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "LuaModule",
   "author": "james.martin@qsc.com",
-  "description": "Get UCI structure as a table, and control Layers in a scalable way with higher order functions.\nAlso includes the standard Uci function for completeness.",
+  "description": "UCINodes: Abstraction for UCI buttons/layers, navigation bars, and nested main menus. See README.md.",
   "requiredVersion" : "9.5"
 }
