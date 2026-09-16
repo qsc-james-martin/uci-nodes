@@ -4,7 +4,7 @@ triggers; Menu does not read or change their Boolean or Value states.
 `homeButton` is optional at every level. It returns to that menu's own root:
 # UCINodes
 
-UCINodes is a small Lua helper for Q-Sys UCI scripting. It keeps the common
+UCINodes is a Lua helper for Q-Sys UCI scripting. It keeps the common
 "press this button, show this layer, hide the other layers" pattern in one
 tidy place, so your script does not become a long list of repeated
 `EventHandler` and `Uci.SetLayerVisibility` calls.
