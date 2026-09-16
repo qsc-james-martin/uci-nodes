@@ -154,6 +154,9 @@ child bar restores where they left off.
 When the user leaves the parent entry, UCINodes hides the parent layer and
 anything the child nav bar was showing.
 
+A child NavigationBar, Menu, or Popup belongs to one parent container. Create
+a separate child instance when the same layout is needed in multiple places.
+
 When a parent nav entry shows a child nav bar, the parent entry's transition is used for that show/hide.
 After that, pressing child nav buttons uses the child nav's own transition
 settings again.
@@ -195,6 +198,60 @@ through `child`, so pressing it returns from the deepest active menu first.
 `AdvancedHome` returns to `Advanced Menu`, while `Home` returns all the way to
 `Main Menu`.
 
+An entry's `transition` applies to its own layers and that menu's
+`commonLayers`. Child NavigationBars, Menus, and Popups inherit the parent
+entry's transition unless they set their own `transition`.
+
+Set `backTransition` on a menu to use one reverse direction for all of its
+entries and nested Menus, or set it on an entry to override that menu default
+for one route. A nested Menu can set its own `backTransition` to override the
+inherited value. It is used by `Back()` and `Home()` and is useful for
+carousel-style navigation:
+
+```lua
+local menu = UCINodes.Menu.New{
+  transition = { "right", "left" },
+  backTransition = { "left", "right" },
+  layers = "Settings Menu",
+  entries = {
+    {
+      button = Controls.Advanced,
+      layers = "Advanced Shell",
+      backTransition = "top", -- optional override for this entry
+    },
+  }
+}
+```
+
+The entry-level form is also valid on its own:
+
+```lua
+{
+  button = Controls.Advanced,
+  layers = "Advanced Shell",
+  transition = { "right", "left" },
+  backTransition = { "left", "right" },
+}
+```
+
+Omit `backTransition` to use `transition` for both directions.
+
+When a Menu entry opens a child Menu, give the child Menu its own root layers
+instead of repeating those same layers on the parent entry. This prevents two
+containers from changing the same layer during a transition:
+
+```lua
+local subMenu = UCINodes.Menu.New{
+  layers = "Submenu Options",
+  entries = { ... }
+}
+
+mainMenu:AddEntry{
+  button = Controls.OpenSubmenu,
+  child = subMenu,
+}
+```
+
 Main-menu callbacks receive one event table after a local state change:
 
 ```lua
@@ -210,6 +267,103 @@ end
 `event.type` is `"select"`, `"back"`, or `"home"`; `event.menu` is the menu
 that changed. `event.index` is set for selections and `event.previousIndex` is
 set for back/home actions.
+
+## Access Gates
+
+Menu entries and Popups can require access before showing their normal layers.
+UCINodes does not implement a PIN pad or validate credentials. Your script owns
+that work and exposes the result through a Boolean or Value control.
+
+```lua
+local mainMenu = UCINodes.Menu.New{
+  layers = "Main Menu",
+  entries = {
+    {
+      button = Controls.Settings,
+      layers = "Settings",
+      access = {
+        control = Controls.SettingsAccessGranted,
+        accessDeniedLayers = "Settings PIN Pad",
+        logoutButton = Controls.SettingsLogout,
+        autoLogout = true,
+      },
+    },
+  }
+}
+```
+
+When `SettingsAccessGranted` is false, pressing Settings hides the Menu options
+and shows `Settings PIN Pad`. Set the control to true after validating the PIN;
+UCINodes then automatically hides the prompt and opens Settings.
+
+The same `access` table works with `Popup.New`. A shared access control releases
+every pending protected Menu entry or Popup when it becomes true.
+
+`logoutButton` is optional. Its `:Trigger()` action returns its protected Menu
+entry to that Menu's option layers, or closes its protected Popup. UCINodes
+chains the logout button's existing event handler, so it can clear your access
+control or reset the PIN pad. Set `autoLogout = true` to call
+`logoutButton:Trigger()` automatically when `Back()` or `Home()` leaves that
+protected Menu entry. `autoLogout` requires a `logoutButton` that provides
+`:Trigger()`.
+
+UCINodes chains the access control's existing `EventHandler` and runs it before
+opening pending targets. Do not replace that handler after constructing a
+protected target. Clear the access control from your own logout or timeout
+logic; UCINodes never changes its value.
+
+Set `AccessHandler` on a protected Menu or Popup to observe the access
+lifecycle without changing the grant control. It receives an event table with
+`type` set to `"denied"`, `"granted"`, or `"released"`; `target` is the Menu
+or Popup and `access` is its configured access table. Menu events also include
+the entry `index`.
+
+## Breadcrumbs
+
+Every `NavigationBar`, `Menu`, and `Popup` has a dynamic `Breadcrumbs` string
+that describes its location and the active child path. To update a UCI text
+control automatically across the complete child tree, set `breadcrumbsControl`
+on the root container:
+
+```lua
+local mainMenu = UCINodes.Menu.New{
+  breadcrumbsControl = Controls.Breadcrumbs,
+  layers = "Main Menu",
+  entries = { ... }
+}
+```
+
+The control's `.String` is refreshed after Menu, NavigationBar, and Popup
+state changes, including nested children. A child inherits the root control
+unless it defines its own `breadcrumbsControl`.
+
+Name containers with `name` and entries with `name` for the clearest display:
+
+```lua
+local audio = UCINodes.NavigationBar.New{
+  name = "Audio",
+  entries = {
+    { name = "Mics", button = Controls.Mics, layers = "Microphones" },
+  }
+}
+
+local menu = UCINodes.Menu.New{
+  name = "Settings",
+  layers = "Settings Menu",
+  entries = {
+    { name = "Audio", button = Controls.Audio, layers = "Audio Shell", child = audio },
+  }
+}
+```
+
+With both entries active, `menu.Breadcrumbs` is:
+
+```text
+Settings > Audio > Audio > Mics
+```
+
+When a `name` is omitted, UCINodes uses `Menu`, `NavigationBar`, `Popup`, or
+`Item` with its one-based index, for example `Menu > Item [2]`.
 
 ## Popups
 
@@ -429,6 +583,7 @@ local nav = UCINodes.NavigationBar.New{
 | `allowButtonOff` | boolean | Defaults to `false`. Set `true` to allow the selected button to turn the bar off. |
 | `transition` | string or table | Optional layer transition for entries in this bar. |
 | `commonLayers` | string or list of strings | Optional layers shown whenever this nav bar is visible, including while entries change. |
+| `breadcrumbsControl` | Control | Optional text control updated with this navigation tree's breadcrumbs. |
 | `entries` | list of entry tables | Optional entries to add during construction. |
 | `EventHandler` | function | Optional callback assigned after creation. Receives the active index, or `nil` when no entry is active. |
 
@@ -447,6 +602,7 @@ nav:AddEntry{
 
 | Field | Type | Description |
 |---|---|---|
+| `name` | string | Optional label used by breadcrumbs. |
 | `button` | Control | Required. The Q-Sys control the user presses. |
 | `layers` | string or list of strings | Required. The layer or layers to show when selected. |
 | `default` | boolean | Optional first selected entry. If none is marked, the first entry is used. |
@@ -486,8 +642,10 @@ local menu = UCINodes.Menu.New{
 | `name` | string | Optional debug label. |
 | `page` | string | Optional UCI page for this menu. |
 | `transition` | string or table | Optional layer transition for this menu and its entries. |
+| `backTransition` | string or table | Optional default transition for this menu's `Back()` and `Home()` actions. Entries can override it. |
 | `layers` | string or list of strings | Required root/menu layers containing the option buttons. |
 | `commonLayers` | string or list of strings | Optional layers shown while one of this menu's entries is selected; hidden at the menu's root. |
+| `breadcrumbsControl` | Control | Optional text control updated with this menu tree's breadcrumbs. |
 | `backButton` | Control | Supply on the top-level menu only; nested menus inherit it. |
 | `homeButton` | Control | Optional. Returns this menu to its own root layers. |
 | `entries` | list of entry tables | Optional entries to add during construction. |
@@ -506,7 +664,8 @@ menu:Reset()
 ```
 
 `AddEntry()` uses the same `button`, `layers`, `child`, `transition`, and
-`page` fields as `NavigationBar:AddEntry`.
+`page` fields as `NavigationBar:AddEntry`, plus optional `backTransition` for
+the animation used by `Back()` and `Home()`.
 
 ### Popup.New
 
@@ -529,6 +688,7 @@ local popup = UCINodes.Popup.New{
 | `name` | string | Optional debug label. |
 | `page` | string | Optional UCI page for this popup's layers. |
 | `transition` | string or table | Optional layer transition. |
+| `breadcrumbsControl` | Control | Optional text control updated with this popup tree's breadcrumbs. |
 | `EventHandler` | function | Optional callback assigned after creation. Receives `true` on open and `false` on close. |
 
 ### Popup Methods
