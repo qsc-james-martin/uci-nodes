@@ -74,17 +74,33 @@ local function normalizeLayers(layers, owner)
   if layers == nil then
     return {}
   elseif type(layers) == "string" then
-    return { layers }
+    return { { name = layers } }
   elseif type(layers) ~= "table" then
-    error("[UCINodes] " .. describeField(owner, "layers") .. " must be a layer name string or a table of layer name strings.", 3)
+    error("[UCINodes] " .. describeField(owner, "layers") .. " must be a layer name string or a list of layer names/descriptors.", 3)
   end
 
-  for index, layerName in ipairs(layers) do
-    if type(layerName) ~= "string" then
-      error("[UCINodes] " .. describeField(owner, "layers") .. " item " .. tostring(index) .. " must be a string layer name.", 3)
+  local normalized = {}
+  for index, layer in ipairs(layers) do
+    if type(layer) == "string" then
+      table.insert(normalized, { name = layer })
+    elseif type(layer) == "table" and type(layer.layer) == "string" then
+      if layer.transition ~= nil and type(layer.transition) ~= "string" and type(layer.transition) ~= "table" then
+        error("[UCINodes] " .. describeField(owner, "layers") .. " item " .. tostring(index) .. " transition must be a string or table.", 3)
+      end
+      table.insert(normalized, { name = layer.layer, transition = layer.transition })
+    else
+      error("[UCINodes] " .. describeField(owner, "layers") .. " item " .. tostring(index) .. " must be a string layer name or a table with layer = 'Layer Name'.", 3)
     end
   end
-  return layers
+  return normalized
+end
+
+local function normalizeStaggerDuration(duration, owner)
+  if duration == nil then return 0 end
+  if type(duration) ~= "number" or duration ~= duration or duration < 0 or duration == math.huge then
+    error("[UCINodes] " .. owner .. ".staggerDuration must be a finite, non-negative number of seconds.", 3)
+  end
+  return duration
 end
 
 local function normalizeAccess(access, owner)
@@ -138,13 +154,21 @@ end
 -- nil -> (nil, nil); a string -> same transition for both; a table -> either
 -- {on = ..., off = ...} or {onTransition, offTransition} positionally
 local function normalizeTransition(transition)
+  local onTransition, offTransition
   if transition == nil then
     return nil, nil
   elseif type(transition) == "string" then
     return transition, transition
+  elseif type(transition) == "table" then
+    onTransition, offTransition = transition.on or transition[1], transition.off or transition[2]
   else
-    return transition.on or transition[1], transition.off or transition[2]
+    error("[UCINodes] transition must be a string or table.", 3)
   end
+  if (onTransition ~= nil and type(onTransition) ~= "string")
+    or (offTransition ~= nil and type(offTransition) ~= "string") then
+    error("[UCINodes] transition table values must be strings.", 3)
+  end
+  return onTransition, offTransition
 end
 
 --------------------------------------------------------------------------------
@@ -186,6 +210,34 @@ function Target:Set(value, transition, page)
   end
 end
 
+local function makeLayerActions(layers)
+  local onSelect, onDeselect = {}, {}
+  for _, layer in ipairs(layers) do
+    local onTransition, offTransition = normalizeTransition(layer.transition)
+    table.insert(onSelect, {
+      target = Target.Layer(layer.name),
+      value = true,
+      transitionOverride = onTransition,
+    })
+    table.insert(onDeselect, {
+      target = Target.Layer(layer.name),
+      value = false,
+      transitionOverride = offTransition,
+    })
+  end
+  return onSelect, onDeselect
+end
+
+local function setActionTransitions(actions, onTransition, offTransition)
+  for _, action in ipairs(actions) do
+    if action.value then
+      action.transition = action.transitionOverride or onTransition
+    else
+      action.transition = action.transitionOverride or offTransition
+    end
+  end
+end
+
 
 --------------------------------------------------------------------------------
 -- Node (internal): trigger -> onSelect/onDeselect Target actions.
@@ -210,6 +262,9 @@ function Node.New(spec)
   end
   self._isUpdating = false
   self._ignoreControlValue = nil
+  self._layerTimers = {}
+  self._layerSequence = 0
+  self.staggerDuration = normalizeStaggerDuration(spec.staggerDuration, "Node.New")
 
   if self.button then
     -- fold the button's own visual state into the action lists, so "selected"
@@ -233,12 +288,51 @@ end
 
 local function applyActions(node, actions, targetKind)
   if targetKind ~= "layer" then node._isUpdating = true end
+  local layerActions = {}
+  if targetKind ~= "control" then
+    for _, action in ipairs(actions) do
+      if action.target.kind == "layer" then table.insert(layerActions, action) end
+    end
+  end
+
+  local sequence
+  if #layerActions > 0 then
+    node._layerSequence = node._layerSequence + 1
+    sequence = node._layerSequence
+    for timer in pairs(node._layerTimers) do
+      timer:Stop()
+      node._layerTimers[timer] = nil
+    end
+  end
+
+  local staggerDuration = node.staggerDuration or 0
+  -- Divide the start window by layer count so the first layer starts now.
+  local staggerInterval = staggerDuration / math.max(#layerActions, 1)
+  local layerIndex = 0
   for _, action in ipairs(actions) do
     if targetKind == nil or action.target.kind == targetKind then
       if action.target.kind == "control" then
         node._ignoreControlValue = action.value
+        action.target:Set(action.value, action.transition, action.page)
+      elseif action.target.kind == "layer" then
+        layerIndex = layerIndex + 1
+        local delay = (layerIndex - 1) * staggerInterval
+        if delay > 0 then
+          local timer = Timer.New()
+          local scheduledAction = action
+          node._layerTimers[timer] = true
+          timer.EventHandler = function()
+            timer:Stop()
+            node._layerTimers[timer] = nil
+            if node._layerSequence == sequence then
+              scheduledAction.target:Set(scheduledAction.value, scheduledAction.transition, scheduledAction.page)
+            end
+          end
+          timer:Start(delay)
+        else
+          action.target:Set(action.value, action.transition, action.page)
+        end
       end
-      action.target:Set(action.value, action.transition, action.page)
     end
   end
   if targetKind ~= "layer" then node._isUpdating = false end
@@ -366,11 +460,7 @@ NavigationBar.__index = publicIndex(NavigationBar)
 -- via bar.transition = ... after New(), not just at construction.
 function NavigationBar.New(opts)
   opts = opts or {}
-  local commonOnSelect, commonOnDeselect = {}, {}
-  for _, layerName in ipairs(normalizeLayers(opts.commonLayers, "NavigationBar.New")) do
-    table.insert(commonOnSelect, { target = Target.Layer(layerName), value = true })
-    table.insert(commonOnDeselect, { target = Target.Layer(layerName), value = false })
-  end
+  local commonOnSelect, commonOnDeselect = makeLayerActions(normalizeLayers(opts.commonLayers, "NavigationBar.New"))
   local self = setmetatable({
     name = opts.name,
     _breadcrumbType = "NavigationBar",
@@ -381,6 +471,7 @@ function NavigationBar.New(opts)
     parentEntry = nil, -- set when this bar is attached as another bar's child
     allowButtonOff = opts.allowButtonOff or false,
     transition = opts.transition,
+    staggerDuration = normalizeStaggerDuration(opts.staggerDuration, "NavigationBar.New"),
     page = getPage(opts),
     _inheritedPage = nil,
     _inheritedTransition = nil,
@@ -389,7 +480,11 @@ function NavigationBar.New(opts)
     breadcrumbsControl = opts.breadcrumbsControl,
     _breadcrumbsControlExplicit = opts.breadcrumbsControl ~= nil,
   }, NavigationBar)
-  self.commonNode = Node.New{ onSelect = commonOnSelect, onDeselect = commonOnDeselect }
+  self.commonNode = Node.New{
+    onSelect = commonOnSelect,
+    onDeselect = commonOnDeselect,
+    staggerDuration = self.staggerDuration,
+  }
 
   for _, entry in ipairs(opts.entries or {}) do
     self:AddEntry(entry)
@@ -409,12 +504,7 @@ function NavigationBar:AddEntry(spec)
   end
 
   local layers = normalizeLayers(spec.layers, "NavigationBar:AddEntry")
-
-  local onSelect, onDeselect = {}, {}
-  for _, layerName in ipairs(layers) do
-    table.insert(onSelect, { target = Target.Layer(layerName), value = true })
-    table.insert(onDeselect, { target = Target.Layer(layerName), value = false })
-  end
+  local onSelect, onDeselect = makeLayerActions(layers)
 
   local index = #self.entries + 1
   local entry = {
@@ -422,12 +512,15 @@ function NavigationBar:AddEntry(spec)
     name = spec.name,
     index = index,
     transition = spec.transition,
+    staggerDuration = spec.staggerDuration ~= nil
+      and normalizeStaggerDuration(spec.staggerDuration, "NavigationBar:AddEntry") or nil,
     page = getPage(spec),
   }
   entry.node = Node.New{
     button = spec.button,
     onSelect = onSelect,
     onDeselect = onDeselect,
+    staggerDuration = entry.staggerDuration or self.staggerDuration,
     onTrigger = function(_, pressed)
       if pressed then
         self:Select(index)
@@ -532,26 +625,20 @@ end
 function NavigationBar:_applyTransition(entry, inheritedTransition, inheritedPage)
   self:_applyPage(entry, inheritedPage)
   local onTransition, offTransition = normalizeTransition(self:_resolveTransition(entry, inheritedTransition))
-  for _, action in ipairs(entry.node.onSelect) do
-    action.transition = onTransition
-  end
-  for _, action in ipairs(entry.node.onDeselect) do
-    action.transition = offTransition
-  end
+  entry.node.staggerDuration = normalizeStaggerDuration(entry.staggerDuration or self.staggerDuration, "NavigationBar:AddEntry")
+  setActionTransitions(entry.node.onSelect, onTransition, offTransition)
+  setActionTransitions(entry.node.onDeselect, onTransition, offTransition)
   return onTransition, offTransition
 end
 
 function NavigationBar:_applyCommon(inheritedTransition, inheritedPage)
   local page = self:_resolvePage({ }, inheritedPage)
   local onTransition, offTransition = normalizeTransition(inheritedTransition or self.transition)
-  for _, action in ipairs(self.commonNode.onSelect) do
-    action.page = page
-    action.transition = onTransition
-  end
-  for _, action in ipairs(self.commonNode.onDeselect) do
-    action.page = page
-    action.transition = offTransition
-  end
+  self.commonNode.staggerDuration = normalizeStaggerDuration(self.staggerDuration, "NavigationBar.New")
+  for _, action in ipairs(self.commonNode.onSelect) do action.page = page end
+  for _, action in ipairs(self.commonNode.onDeselect) do action.page = page end
+  setActionTransitions(self.commonNode.onSelect, onTransition, offTransition)
+  setActionTransitions(self.commonNode.onDeselect, onTransition, offTransition)
 end
 
 function NavigationBar:Select(index, inheritedTransition, inheritedPage)
@@ -709,12 +796,7 @@ local Menu = {}
 Menu.__index = publicIndex(Menu)
 
 local function menuActions(layers)
-  local onSelect, onDeselect = {}, {}
-  for _, layerName in ipairs(layers) do
-    table.insert(onSelect, { target = Target.Layer(layerName), value = true })
-    table.insert(onDeselect, { target = Target.Layer(layerName), value = false })
-  end
-  return onSelect, onDeselect
+  return makeLayerActions(layers)
 end
 
 local function attachMenuTrigger(control, action)
@@ -743,6 +825,7 @@ function Menu.New(opts)
     lastSelectedIndex = nil,
     parentEntry = nil,
     transition = opts.transition,
+    staggerDuration = normalizeStaggerDuration(opts.staggerDuration, "Menu.New"),
     backTransition = opts.backTransition,
     page = getPage(opts),
     _inheritedPage = nil,
@@ -755,8 +838,16 @@ function Menu.New(opts)
     _ownsBackController = false,
   }, Menu)
 
-  self.rootNode = Node.New{ onSelect = rootOnSelect, onDeselect = rootOnDeselect }
-  self.commonNode = Node.New{ onSelect = commonOnSelect, onDeselect = commonOnDeselect }
+  self.rootNode = Node.New{
+    onSelect = rootOnSelect,
+    onDeselect = rootOnDeselect,
+    staggerDuration = self.staggerDuration,
+  }
+  self.commonNode = Node.New{
+    onSelect = commonOnSelect,
+    onDeselect = commonOnDeselect,
+    staggerDuration = self.staggerDuration,
+  }
 
   if opts.homeButton then
     self.homeButton = opts.homeButton
@@ -815,6 +906,8 @@ function Menu:AddEntry(spec)
     name = spec.name,
     index = index,
     transition = spec.transition,
+    staggerDuration = spec.staggerDuration ~= nil
+      and normalizeStaggerDuration(spec.staggerDuration, "Menu:AddEntry") or nil,
     backTransition = spec.backTransition,
     page = getPage(spec),
     access = access,
@@ -822,11 +915,16 @@ function Menu:AddEntry(spec)
   entry.node = Node.New{
     onSelect = onSelect,
     onDeselect = onDeselect,
+    staggerDuration = entry.staggerDuration or self.staggerDuration,
   }
   entry.button = spec.button
   if access then
     local deniedOnSelect, deniedOnDeselect = menuActions(access.layers)
-    access.node = Node.New{ onSelect = deniedOnSelect, onDeselect = deniedOnDeselect }
+    access.node = Node.New{
+      onSelect = deniedOnSelect,
+      onDeselect = deniedOnDeselect,
+      staggerDuration = entry.staggerDuration or self.staggerDuration,
+    }
     attachLogoutTrigger(access, function()
       if self.selectedIndex == index then self:Back() end
     end)
@@ -956,14 +1054,19 @@ end
 function Menu:_applyNode(node, entry, inheritedTransition, inheritedPage)
   local page = self:_resolvePage(entry, inheritedPage)
   local onTransition, offTransition = normalizeTransition(self:_resolveTransition(entry, inheritedTransition))
+  if node == self.rootNode or node == self.commonNode then
+    node.staggerDuration = normalizeStaggerDuration(self.staggerDuration, "Menu.New")
+  else
+    node.staggerDuration = normalizeStaggerDuration((entry and entry.staggerDuration) or self.staggerDuration, "Menu:AddEntry")
+  end
   for _, action in ipairs(node.onSelect) do
     action.page = page
-    action.transition = onTransition
   end
   for _, action in ipairs(node.onDeselect) do
     action.page = page
-    action.transition = offTransition
   end
+  setActionTransitions(node.onSelect, onTransition, offTransition)
+  setActionTransitions(node.onDeselect, onTransition, offTransition)
   return onTransition, offTransition, page
 end
 
@@ -1209,17 +1312,14 @@ function Popup.New(spec)
   local layers = normalizeLayers(spec.layers, "Popup.New")
   local access = normalizeAccess(spec.access, "Popup.New")
 
-  local onSelect, onDeselect = {}, {}
-  for _, layerName in ipairs(layers) do
-    table.insert(onSelect, { target = Target.Layer(layerName), value = true })
-    table.insert(onDeselect, { target = Target.Layer(layerName), value = false })
-  end
+  local onSelect, onDeselect = makeLayerActions(layers)
 
   local self = setmetatable({
     name = spec.name,
     _breadcrumbType = "Popup",
     child = spec.child,
     transition = spec.transition,
+    staggerDuration = normalizeStaggerDuration(spec.staggerDuration, "Popup.New"),
     page = getPage(spec),
     _inheritedPage = nil,
     _inheritedTransition = nil,
@@ -1234,13 +1334,18 @@ function Popup.New(spec)
     button = spec.button,
     onSelect = onSelect,
     onDeselect = onDeselect,
+    staggerDuration = self.staggerDuration,
     onTrigger = function(_, pressed)
       if pressed then self:Show() else self:Hide() end
     end,
   }
   if access then
     local deniedOnSelect, deniedOnDeselect = menuActions(access.layers)
-    access.node = Node.New{ onSelect = deniedOnSelect, onDeselect = deniedOnDeselect }
+    access.node = Node.New{
+      onSelect = deniedOnSelect,
+      onDeselect = deniedOnDeselect,
+      staggerDuration = self.staggerDuration,
+    }
     attachLogoutTrigger(access, function()
       if self.isOpen or access.request then self:Hide() end
     end)
@@ -1291,12 +1396,9 @@ end
 function Popup:_applyTransition(inheritedTransition, inheritedPage)
   self:_applyPage(inheritedPage)
   local onTransition, offTransition = normalizeTransition(inheritedTransition or self.transition or self._inheritedTransition)
-  for _, action in ipairs(self.node.onSelect) do
-    action.transition = onTransition
-  end
-  for _, action in ipairs(self.node.onDeselect) do
-    action.transition = offTransition
-  end
+  self.node.staggerDuration = normalizeStaggerDuration(self.staggerDuration, "Popup.New")
+  setActionTransitions(self.node.onSelect, onTransition, offTransition)
+  setActionTransitions(self.node.onDeselect, onTransition, offTransition)
   return onTransition, offTransition
 end
 
@@ -1305,14 +1407,15 @@ function Popup:_applyAccessDenied(visible, inheritedTransition, inheritedPage)
   if not access or not access.node then return end
   local page = self:_resolvePage(inheritedPage)
   local onTransition, offTransition = normalizeTransition(inheritedTransition or self.transition or self._inheritedTransition)
+  access.node.staggerDuration = normalizeStaggerDuration(self.staggerDuration, "Popup.New")
   for _, action in ipairs(access.node.onSelect) do
     action.page = page
-    action.transition = onTransition
   end
   for _, action in ipairs(access.node.onDeselect) do
     action.page = page
-    action.transition = offTransition
   end
+  setActionTransitions(access.node.onSelect, onTransition, offTransition)
+  setActionTransitions(access.node.onDeselect, onTransition, offTransition)
   if visible then
     access.node.isSelected = true
     applyActions(access.node, access.node.onSelect, "layer")

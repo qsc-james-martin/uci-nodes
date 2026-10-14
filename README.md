@@ -121,6 +121,59 @@ main.transition = { "left", "right" }
 main.transition = { on = "left", off = "right" }
 ```
 
+## Staggered Layer Animations
+
+Use `staggerDuration` to spread the start of a node's layer animations across
+a time window. The value is in seconds and is divided evenly across the
+layers, in the order listed. For example, four layers with
+`staggerDuration = 1` start at 0, 0.25, 0.5, and 0.75 seconds. The first layer
+starts immediately; the final layer starts before the duration elapses.
+
+A popup can stagger a simple group of layers with one shared transition:
+
+```lua
+local help = UCINodes.Popup.New{
+  layers = { "Help-Background", "Help-Panel", "Help-Buttons" },
+  transition = "fade",
+  staggerDuration = 1
+}
+
+help:Show()
+```
+
+The same option can be set on a nav bar or menu as the default for its
+layer groups, then overridden on an individual entry. A layer can also
+override the node's transition:
+
+```lua
+local settings = UCINodes.Menu.New{
+  layers = "Settings-Menu",
+  transition = "fade",
+  staggerDuration = 0.5,
+  entries = {
+    {
+      button = Controls.OpenNetwork,
+      staggerDuration = 1,
+      layers = {
+        "Network-Background",
+        {
+          layer = "Network-Panel",
+          transition = { on = "left", off = "right" }
+        },
+        { layer = "Network-Controls", transition = "fade" }
+      }
+    }
+  }
+}
+```
+
+Here the three network layers start about a third of a second apart. The
+background uses the menu's `fade` transition; the panel slides in from the
+left and out to the right. Layers without an override use the node or entry
+transition. With `staggerDuration` omitted or set to `0`, layer changes remain
+immediate as before. Staggering applies to each layer group separately; child
+nodes use their own `staggerDuration`. When a node starts a new layer operation,
+it cancels that node's pending staggered layer changes.
 
 
 ## Child Nav Bars
@@ -582,6 +635,7 @@ local nav = UCINodes.NavigationBar.New{
 | `page` | string | Optional UCI page for this nav bar's entries. |
 | `allowButtonOff` | boolean | Defaults to `false`. Set `true` to allow the selected button to turn the bar off. |
 | `transition` | string or table | Optional layer transition for entries in this bar. |
+| `staggerDuration` | number | Optional total start window, in seconds, for this bar's layer groups. Entries can override it. |
 | `commonLayers` | string or list of strings | Optional layers shown whenever this nav bar is visible, including while entries change. |
 | `breadcrumbsControl` | Control | Optional text control updated with this navigation tree's breadcrumbs. |
 | `entries` | list of entry tables | Optional entries to add during construction. |
@@ -604,10 +658,11 @@ nav:AddEntry{
 |---|---|---|
 | `name` | string | Optional label used by breadcrumbs. |
 | `button` | Control | Required. The Q-Sys control the user presses. |
-| `layers` | string or list of strings | Required. The layer or layers to show when selected. |
+| `layers` | string or list of strings/layer descriptors | Required. The layer or layers to show when selected. A descriptor `{ layer = "Name", transition = "fade" }` overrides the transition for that layer. |
 | `default` | boolean | Optional first selected entry. If none is marked, the first entry is used. |
 | `child` | NavigationBar or Popup | Optional child UI owned by this entry. |
 | `transition` | string or table | Optional transition override for this entry. |
+| `staggerDuration` | number | Optional total start window, in seconds, for this entry's layers; overrides the bar setting. |
 | `page` | string | Optional page override for this entry. |
 
 ### NavigationBar Methods
@@ -642,8 +697,9 @@ local menu = UCINodes.Menu.New{
 | `name` | string | Optional debug label. |
 | `page` | string | Optional UCI page for this menu. |
 | `transition` | string or table | Optional layer transition for this menu and its entries. |
+| `staggerDuration` | number | Optional total start window, in seconds, for this menu's layer groups. Entries can override it. |
 | `backTransition` | string or table | Optional default transition for this menu's `Back()` and `Home()` actions. Entries can override it. |
-| `layers` | string or list of strings | Required root/menu layers containing the option buttons. |
+| `layers` | string or list of strings/layer descriptors | Required root/menu layers containing the option buttons. A descriptor `{ layer = "Name", transition = "fade" }` overrides the transition for that layer. |
 | `commonLayers` | string or list of strings | Optional layers shown while one of this menu's entries is selected; hidden at the menu's root. |
 | `breadcrumbsControl` | Control | Optional text control updated with this menu tree's breadcrumbs. |
 | `backButton` | Control | Supply on the top-level menu only; nested menus inherit it. |
@@ -663,9 +719,9 @@ menu:Hide()
 menu:Reset()
 ```
 
-`AddEntry()` uses the same `button`, `layers`, `child`, `transition`, and
-`page` fields as `NavigationBar:AddEntry`, plus optional `backTransition` for
-the animation used by `Back()` and `Home()`.
+`AddEntry()` uses the same `button`, `layers`, `child`, `transition`,
+`staggerDuration`, and `page` fields as `NavigationBar:AddEntry`, plus optional
+`backTransition` for the animation used by `Back()` and `Home()`.
 
 ### Popup.New
 
@@ -683,11 +739,12 @@ local popup = UCINodes.Popup.New{
 | Field | Type | Description |
 |---|---|---|
 | `button` | Control | Optional. Leave it out for a popup controlled only from code. |
-| `layers` | string or list of strings | Required. The layer or layers shown while open. |
+| `layers` | string or list of strings/layer descriptors | Required. The layer or layers shown while open. A descriptor `{ layer = "Name", transition = "fade" }` overrides the transition for that layer. |
 | `child` | NavigationBar or Popup | Optional child UI shown while this popup is open. |
 | `name` | string | Optional debug label. |
 | `page` | string | Optional UCI page for this popup's layers. |
 | `transition` | string or table | Optional layer transition. |
+| `staggerDuration` | number | Optional total start window, in seconds, for this popup's layers. |
 | `breadcrumbsControl` | Control | Optional text control updated with this popup tree's breadcrumbs. |
 | `EventHandler` | function | Optional callback assigned after creation. Receives `true` on open and `false` on close. |
 
