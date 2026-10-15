@@ -175,6 +175,12 @@ immediate as before. Staggering applies to each layer group separately; child
 nodes use their own `staggerDuration`. When a node starts a new layer operation,
 it cancels that node's pending staggered layer changes.
 
+On menu `Back()` or `Home()`, outgoing layer groups hide in reverse list order.
+The menu's root layers then reappear in forward order, after the longest outgoing
+`staggerDuration` window (including any child node being hidden). This sequences
+animation starts; it does not wait for Q-SYS transition animations to finish.
+With all outgoing stagger durations set to `0`, returning remains immediate.
+
 
 ## Child Nav Bars
 

@@ -286,6 +286,17 @@ function Node.New(spec)
   return self
 end
 
+local backLayerTiming
+
+local function withBackLayerTiming(callback)
+  local previous = backLayerTiming
+  backLayerTiming = { returnDelay = 0 }
+  local ok, result = pcall(callback)
+  backLayerTiming = previous
+  if not ok then error(result, 0) end
+  return result
+end
+
 local function applyActions(node, actions, targetKind)
   if targetKind ~= "layer" then node._isUpdating = true end
   local layerActions = {}
@@ -308,6 +319,10 @@ local function applyActions(node, actions, targetKind)
   local staggerDuration = node.staggerDuration or 0
   -- Divide the start window by layer count so the first layer starts now.
   local staggerInterval = staggerDuration / math.max(#layerActions, 1)
+  local returnDelay = backLayerTiming and backLayerTiming.returnDelay or 0
+  if backLayerTiming and #layerActions > 0 and not layerActions[1].value then
+    backLayerTiming.returnDelay = math.max(returnDelay, staggerDuration)
+  end
   local layerIndex = 0
   for _, action in ipairs(actions) do
     if targetKind == nil or action.target.kind == targetKind then
@@ -317,15 +332,22 @@ local function applyActions(node, actions, targetKind)
       elseif action.target.kind == "layer" then
         layerIndex = layerIndex + 1
         local delay = (layerIndex - 1) * staggerInterval
+        if backLayerTiming then
+          if action.value then
+            delay = returnDelay + delay
+          else
+            delay = (#layerActions - layerIndex) * staggerInterval
+          end
+        end
         if delay > 0 then
           local timer = Timer.New()
-          local scheduledAction = action
+          local target, value, transition, page = action.target, action.value, action.transition, action.page
           node._layerTimers[timer] = true
           timer.EventHandler = function()
             timer:Stop()
             node._layerTimers[timer] = nil
             if node._layerSequence == sequence then
-              scheduledAction.target:Set(scheduledAction.value, scheduledAction.transition, scheduledAction.page)
+              target:Set(value, transition, page)
             end
           end
           timer:Start(delay)
@@ -1197,30 +1219,34 @@ end
 
 function Menu:_returnToRoot(eventType, inheritedTransition, inheritedPage)
   local previousIndex = self.selectedIndex
-  if not previousIndex then
-    self:_clearAccessDenied(inheritedTransition, inheritedPage)
-    self:_hideCommon(nil, inheritedTransition, inheritedPage)
-    self:_showRoot(nil, inheritedTransition, inheritedPage)
-    refreshBreadcrumbs(self)
-    return false
-  end
-  local entry = self.entries[previousIndex]
-  triggerAutoLogout(entry.access)
-  local backTransition = self:_resolveBackTransition(entry, inheritedTransition)
-  local _, _, childPage = self:_applyNode(entry.node, entry, backTransition, inheritedPage)
-  entry.node:Deselect()
-  self:_hideChild(entry, backTransition, childPage)
-  self:_releaseAccess(entry)
-  if eventType == "home" and entry.child and entry.child._isMenu then
-    entry.child.lastSelectedIndex = nil
-  end
-  self.selectedIndex = nil
-  self.lastSelectedIndex = nil
-  self:_hideCommon(entry, backTransition, inheritedPage)
-  self:_showRoot(entry, backTransition, inheritedPage)
-  self:_emit(eventType, nil, previousIndex)
+  if not previousIndex and self.rootNode.isSelected then return false end
+  local returned = withBackLayerTiming(function()
+    if not previousIndex then
+      self:_clearAccessDenied(inheritedTransition, inheritedPage)
+      self:_hideCommon(nil, inheritedTransition, inheritedPage)
+      self:_showRoot(nil, inheritedTransition, inheritedPage)
+      refreshBreadcrumbs(self)
+      return false
+    end
+    local entry = self.entries[previousIndex]
+    triggerAutoLogout(entry.access)
+    local backTransition = self:_resolveBackTransition(entry, inheritedTransition)
+    local _, _, childPage = self:_applyNode(entry.node, entry, backTransition, inheritedPage)
+    entry.node:Deselect()
+    self:_hideChild(entry, backTransition, childPage)
+    self:_releaseAccess(entry)
+    if eventType == "home" and entry.child and entry.child._isMenu then
+      entry.child.lastSelectedIndex = nil
+    end
+    self.selectedIndex = nil
+    self.lastSelectedIndex = nil
+    self:_hideCommon(entry, backTransition, inheritedPage)
+    self:_showRoot(entry, backTransition, inheritedPage)
+    return true
+  end)
+  if returned then self:_emit(eventType, nil, previousIndex) end
   refreshBreadcrumbs(self)
-  return true
+  return returned
 end
 
 function Menu:Back(inheritedTransition, inheritedPage)

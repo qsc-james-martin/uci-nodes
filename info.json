@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "LuaModule",
   "author": "james.martin@qsc.com",
   "description": "UCINodes: Abstraction for UCI buttons/layers, navigation bars, and nested main menus. See README.md.",
