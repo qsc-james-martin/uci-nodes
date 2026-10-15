@@ -199,7 +199,10 @@ function Target:Set(value, transition, page)
     end
     dprint("Target.Layer", resolvedPage, self.layer, "=", value, transition)
     -- verify this signature against your Q-Sys version
-    Uci.SetLayerVisibility(resolvedPage, self.layer, value, transition)
+    local ok, err = pcall(Uci.SetLayerVisibility, resolvedPage, self.layer, value, transition)
+    if not ok then
+      error("[UCINodes] Failed to set visibility for layer '" .. tostring(self.layer) .. "' on page '" .. tostring(resolvedPage) .. "': " .. tostring(err) .. ". Check that the page and layer names exist in your design.", 2)
+    end
   elseif self.kind == "control" then
     dprint("Target.Control", self.control, "=", value)
     if self.control.Boolean ~= nil then
