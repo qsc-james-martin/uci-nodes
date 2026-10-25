@@ -1,7 +1,3 @@
-`backButton`, `homeButton`, and entry `button` controls are event-only UCI
-triggers; Menu does not read or change their Boolean or Value states.
-
-`homeButton` is optional at every level. It returns to that menu's own root:
 # UCINodes
 
 UCINodes is a Lua helper for Q-Sys UCI scripting. It keeps the common
