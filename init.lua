@@ -9,10 +9,14 @@
 
 local UCINodes = {}
 
--- Uci.SetLayerVisibility's first arg is the page name, not a UCI/instance
--- identifier - there's no way to detect it from inside the script. Set this
--- as a simple fallback, or set page on nav bars, popups, or entries.
+-- In UCI scripts, Uci.SetLayerVisibility takes the page name as its first
+-- argument. Set this as a fallback, or set page on nodes or entries.
 UCINodes.DefaultPage = nil
+
+-- UCI scripts are local to their UCI and omit the UCI name from
+-- Uci.SetLayerVisibility. Set false when calling from an external script.
+UCINodes.IsUCIScript = true
+UCINodes.UCIName = nil
 
 -- set true to print every Target:Set / Node select-deselect / NavigationBar
 -- show-hide call to the Lua Debugger console
@@ -197,9 +201,21 @@ function Target:Set(value, transition, page)
     if type(resolvedPage) ~= "string" or resolvedPage == "" then
       error("[UCINodes] No UCI page is set for layer '" .. tostring(self.layer) .. "'. Set UCINodes.DefaultPage = 'Page 1', or set page = 'Page 1' on the NavigationBar, Popup, AddEntry, or Target.Layer that owns this layer.", 2)
     end
-    dprint("Target.Layer", resolvedPage, self.layer, "=", value, transition)
-    -- verify this signature against your Q-Sys version
-    local ok, err = pcall(Uci.SetLayerVisibility, resolvedPage, self.layer, value, transition)
+    if type(UCINodes.IsUCIScript) ~= "boolean" then
+      error("[UCINodes] IsUCIScript must be true or false.", 2)
+    end
+    local ok, err
+    if UCINodes.IsUCIScript then
+      dprint("Target.Layer", resolvedPage, self.layer, "=", value, transition)
+      ok, err = pcall(Uci.SetLayerVisibility, resolvedPage, self.layer, value, transition)
+    else
+      local uciName = UCINodes.UCIName
+      if type(uciName) ~= "string" or uciName == "" then
+        error("[UCINodes] UCIName must be set to the target UCI name when IsUCIScript is false.", 2)
+      end
+      dprint("Target.Layer", uciName, resolvedPage, self.layer, "=", value, transition)
+      ok, err = pcall(Uci.SetLayerVisibility, uciName, resolvedPage, self.layer, value, transition)
+    end
     if not ok then
       error("[UCINodes] Failed to set visibility for layer '" .. tostring(self.layer) .. "' on page '" .. tostring(resolvedPage) .. "': " .. tostring(err) .. ". Check that the page and layer names exist in your design.", 2)
     end
