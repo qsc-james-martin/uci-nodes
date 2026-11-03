@@ -1290,6 +1290,7 @@ function Menu:Hide(inheritedTransition, inheritedPage)
     local _, _, childPage = self:_applyNode(entry.node, entry, inheritedTransition, inheritedPage)
     entry.node:Deselect()
     self:_hideChild(entry, childTransition, childPage)
+    triggerAutoLogout(entry.access)
     self:_releaseAccess(entry)
     self.lastSelectedIndex = self.selectedIndex
     self.selectedIndex = nil
@@ -1309,6 +1310,7 @@ function Menu:Reset(inheritedTransition, inheritedPage)
     local _, _, childPage = self:_applyNode(entry.node, entry, inheritedTransition, inheritedPage)
     entry.node:Deselect()
     self:_resetChild(entry, childTransition, childPage)
+    triggerAutoLogout(entry.access)
     self:_releaseAccess(entry)
   end
   self.selectedIndex = nil

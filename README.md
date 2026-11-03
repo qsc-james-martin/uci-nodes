@@ -359,7 +359,9 @@ entry to that Menu's option layers, or closes its protected Popup. UCINodes
 chains the logout button's existing event handler, so it can clear your access
 control or reset the PIN pad. Set `autoLogout = true` to call
 `logoutButton:Trigger()` automatically when `Back()` or `Home()` leaves that
-protected Menu entry. `autoLogout` requires a `logoutButton` that provides
+protected Menu entry, or when `Hide()` hides the selected entry. `Reset()` also
+logs out every Menu entry with `autoLogout = true`, including when called by
+`Show()` or `Initialize()`. `autoLogout` requires a `logoutButton` that provides
 `:Trigger()`.
 
 UCINodes chains the access control's existing `EventHandler` and runs it before
