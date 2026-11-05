@@ -211,6 +211,7 @@ anything the child nav bar was showing.
 
 A child NavigationBar, Menu, or Popup belongs to one parent container. Create
 a separate child instance when the same layout is needed in multiple places.
+Child containers must form a tree; attaching an ancestor as a child is rejected.
 
 When a parent nav entry shows a child nav bar, the parent entry's transition is used for that show/hide.
 After that, pressing child nav buttons uses the child nav's own transition

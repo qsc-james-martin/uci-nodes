@@ -455,6 +455,14 @@ local function attachChild(parent, entry, child, page, transition, backTransitio
     error("[UCINodes] This child already belongs to another parent.", 3)
   end
 
+  local ancestor = parent
+  while ancestor do
+    if ancestor == child then
+      error("[UCINodes] This child would create a parent/child cycle.", 3)
+    end
+    ancestor = ancestor.parentContainer
+  end
+
   child.parentEntry = entry
   child.parentContainer = parent
   if child._inheritPage then child:_inheritPage(page) end
@@ -541,6 +549,9 @@ function NavigationBar:AddEntry(spec)
       and normalizeStaggerDuration(spec.staggerDuration, "NavigationBar:AddEntry") or nil,
     page = getPage(spec),
   }
+  if spec.child then
+    attachChild(self, entry, spec.child, self:_resolvePage(entry), self:_resolveTransition(entry))
+  end
   entry.node = Node.New{
     button = spec.button,
     onSelect = onSelect,
@@ -558,9 +569,6 @@ function NavigationBar:AddEntry(spec)
   }
   table.insert(self.entries, entry)
 
-  if spec.child then
-    attachChild(self, entry, spec.child, self:_resolvePage(entry), self:_resolveTransition(entry))
-  end
   if spec.default then
     self.defaultIndex = index
   end
@@ -937,6 +945,12 @@ function Menu:AddEntry(spec)
     page = getPage(spec),
     access = access,
   }
+  if entry.child then
+    attachChild(self, entry, entry.child, self:_resolvePage(entry), self:_resolveTransition(entry), self:_resolveBackTransition(entry))
+    if entry.child._isMenu then
+      entry.child:_adoptBackController(self._backController)
+    end
+  end
   entry.node = Node.New{
     onSelect = onSelect,
     onDeselect = onDeselect,
@@ -956,13 +970,6 @@ function Menu:AddEntry(spec)
   end
   attachMenuTrigger(entry.button, function() self:Select(index) end)
   table.insert(self.entries, entry)
-
-  if entry.child then
-    attachChild(self, entry, entry.child, self:_resolvePage(entry), self:_resolveTransition(entry), self:_resolveBackTransition(entry))
-    if entry.child._isMenu then
-      entry.child:_adoptBackController(self._backController)
-    end
-  end
 
   return entry
 end
