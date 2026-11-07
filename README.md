@@ -27,6 +27,20 @@ UCINodes.DefaultPage = "Page 1"
 `DefaultPage` is the UCI page name passed to `Uci.SetLayerVisibility`. It is
 the page name, not the UCI instance name.
 
+UCI scripts use the current UCI automatically. For a Text Controller or other
+external script, disable UCI-script mode and provide the UCI instance name:
+
+```lua
+UCINodes.IsUCIScript = false
+UCINodes.UCIName = "Room UCI"
+UCINodes.DefaultPage = "Page 1"
+```
+
+`IsUCIScript` defaults to `true`, so existing UCI scripts need no change.
+When it is `false`, `UCIName` is required and is passed as the first argument
+to `Uci.SetLayerVisibility`; `DefaultPage` continues to identify the page
+within that UCI.
+
 Then create a nav bar:
 
 ```lua
@@ -788,6 +802,9 @@ UCINodes.DefaultPage = "Page 1"
 local nav = UCINodes.NavigationBar.New{ page = "Page 1" }
 local popup = UCINodes.Popup.New{ page = "Page 1", layers = "Help" }
 ```
+
+For a Text Controller or other external script, also set
+`UCINodes.IsUCIScript = false` and provide `UCINodes.UCIName`.
 
 You will also get UCINodes-flavored messages for common setup mistakes, like
 forgetting the `button` field on a nav entry or giving `layers` something
